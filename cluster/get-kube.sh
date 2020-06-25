@@ -243,14 +243,15 @@ esac
 file=kubernetes.tar.gz
 release=${KUBERNETES_RELEASE:-"release/stable"}
 
-# Validate Kubernetes release version.
-# Translate a published version <bucket>/<version> (e.g. "release/stable") to version number.
+# check for cmd line k8s version 
 if [[ "$#" -ne 1 && "$#" -eq 0 ]]; then
         set_binary_version "${release}"
 else
         set_binary_version $1
 fi
 
+# Validate Kubernetes release version.
+# Translate a published version <bucket>/<version> (e.g. "release/stable") to version number.
 if [[ -z "${KUBERNETES_SKIP_RELEASE_VALIDATION-}" ]]; then
   if [[ ${KUBE_VERSION} =~ ${KUBE_RELEASE_VERSION_REGEX} ]]; then
     # Use KUBERNETES_RELEASE_URL for Releases and Pre-Releases
