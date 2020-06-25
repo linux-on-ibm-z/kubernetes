@@ -24,7 +24,7 @@
 #  Set KUBERNETES_PROVIDER to choose between different providers:
 #  Google Compute Engine [default]
 #   * export KUBERNETES_PROVIDER=gce; wget -q -O - https://get.k8s.io | bash
-#
+   unset KUBERNETES_PROVIDER
 #  Set KUBERNETES_RELEASE to choose a specific release instead of the current
 #    stable release, (e.g. 'v1.3.7').
 #    See https://github.com/kubernetes/kubernetes/releases for release options.
@@ -36,7 +36,8 @@
 #    * amd64 [default]
 #    * arm
 #    * arm64
-#
+   export KUBERNETES_SERVER_ARCH=s390x
+
 #  Set KUBERNETES_NODE_PLATFORM to choose the platform for which to download
 #  the node binaries. If none of KUBERNETES_NODE_PLATFORM and
 #  KUBERNETES_NODE_ARCH is set, no node binaries will be downloaded. If only
@@ -61,6 +62,8 @@
 #      Kubernetes release string. This implies that you know what you're doing
 #      and have set KUBERNETES_RELEASE and KUBERNETES_RELEASE_URL properly.
 
+#export KUBERNETES_SKIP_CREATE_CLUSTER=true
+export KUBERNETES_SKIP_CONFIRM=true
 set -o errexit
 set -o nounset
 set -o pipefail
@@ -105,15 +108,74 @@ function download_kube_binaries {
   )
 }
 
+function setUpKubelet {
+        mkdir -p /opt/cni/bin
+    wget https://github.com/containernetworking/plugins/releases/download/v0.8.6/cni-plugins-linux-s390x-v0.8.6.tgz
+    tar -xvf cni-plugins-linux-s390x-v0.8.6.tgz -C /opt/cni/bin --strip-components 1
+
+        mkdir -p /etc/systemd/system/kubelet.service.d/
+cat <<EOF >>/etc/systemd/system/kubelet.service
+[Unit]
+Description=Kubernetes Kubelet
+Documentation=https://github.com/kubernetes/kubernetes
+[Service]
+ExecStartPre=/bin/mkdir -p /etc/kubernetes/manifests
+ExecStart=/usr/bin/kubelet \
+--v=4
+Restart=on-failure
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat <<EOF >>/etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+# Note: This dropin only works with kubeadm and kubelet v1.11+
+[Service]
+Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf"
+Environment="KUBELET_CONFIG_ARGS=--config=/var/lib/kubelet/config.yaml"
+# This is a file that "kubeadm init" and "kubeadm join" generates at runtime, populating the KUBELET_KUBEADM_ARGS variable dynamically
+EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env
+# This is a file that the user can use for overrides of the kubelet args as a last resort. Preferably, the user should use
+# the .NodeRegistration.KubeletExtraArgs object in the configuration files instead. KUBELET_EXTRA_ARGS should be sourced from this file.
+EnvironmentFile=-/etc/default/kubelet
+ExecStart=
+ExecStart=/usr/bin/kubelet \$KUBELET_KUBECONFIG_ARGS \$KUBELET_CONFIG_ARGS \$KUBELET_KUBEADM_ARGS \$KUBELET_EXTRA_ARGS
+EOF
+        systemctl enable kubelet.service
+}
+
 function create_cluster {
   if [[ -n "${KUBERNETES_SKIP_CREATE_CLUSTER-}" ]]; then
     exit 0
   fi
-  echo "Creating a kubernetes on ${KUBERNETES_PROVIDER:-gce}..."
+  echo "Creating a kubernetes on Host ..."
   (
+    #Extract server binaries
+    mkdir -p ${PWD}/k8s_server
+    tar -xzf ${PWD}/kubernetes/server/kubernetes-server-linux-s390x.tar.gz -C ${PWD}/k8s_server --strip-components 1
+    export PATH=${PWD}/k8s_server/server/bin:$PATH
+
+    ln -sf ${PWD}/k8s_server/server/bin/kubelet /usr/bin/kubelet
     cd kubernetes
-    ./cluster/kube-up.sh
+    #    ./cluster/kube-up.sh
+#    ./cluster/kubeadm.sh
+    if command -v "docker" >/dev/null; then
+        echo "docker is found in path ...."
+    else
+           echo "docker is not found in path ...."
+           exit 127
+    fi
     echo "Kubernetes binaries at ${PWD}/cluster/"
+    export PATH=${PWD}/k8s_server/server/bin:$PATH
+    swapoff -a
+    setUpKubelet
+    kubeadm init --pod-network-cidr=10.244.0.0/16
+    sleep 2m
+    mkdir -p $HOME/.kube
+    cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+    chown $(id -u):$(id -g) $HOME/.kube/config
+    kubectl taint nodes --all node-role.kubernetes.io/master-
+    kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/2140ac876ef134e0ed5af15c65e414cf26827915/Documentation/kube-flannel.yml
     if [[ ":$PATH:" != *":${PWD}/cluster:"* ]]; then
       echo "You may want to add this directory to your PATH in \$HOME/.profile"
     fi
@@ -166,11 +228,13 @@ case "${machine}" in
     ;;
   arm*)
     ;;
+  s390x*)
+    ;;
   i?86*)
     ;;
   *)
     echo "Unknown, unsupported architecture (${machine})." >&2
-    echo "Supported architectures x86_64, i686, arm, arm64." >&2
+    echo "Supported architectures x86_64, i686, arm, arm64, s390x" >&2
     echo "Bailing out." >&2
     exit 3
     ;;
@@ -181,7 +245,12 @@ release=${KUBERNETES_RELEASE:-"release/stable"}
 
 # Validate Kubernetes release version.
 # Translate a published version <bucket>/<version> (e.g. "release/stable") to version number.
-set_binary_version "${release}"
+if [[ "$#" -ne 1 && "$#" -eq 0 ]]; then
+        set_binary_version "${release}"
+else
+        set_binary_version $1
+fi
+
 if [[ -z "${KUBERNETES_SKIP_RELEASE_VALIDATION-}" ]]; then
   if [[ ${KUBE_VERSION} =~ ${KUBE_RELEASE_VERSION_REGEX} ]]; then
     # Use KUBERNETES_RELEASE_URL for Releases and Pre-Releases
@@ -239,13 +308,13 @@ if "${need_download}"; then
   if [[ $(which curl) ]]; then
     # if the url belongs to GCS API we should use oauth2_token in the headers
     curl_headers=""
-    if { [[ "${KUBERNETES_PROVIDER:-gce}" == "gce" ]] || [[ "${KUBERNETES_PROVIDER}" == "gke" ]] ; } &&
-       [[ "$kubernetes_tar_url" =~ ^https://storage.googleapis.com.* ]] ; then
-      curl_headers="Authorization: Bearer $(gcloud auth print-access-token)"
-    fi
+    #if { [[ "${KUBERNETES_PROVIDER:-gce}" == "gce" ]] || [[ "${KUBERNETES_PROVIDER}" == "gke" ]] ; } &&
+    #   [[ "$kubernetes_tar_url" =~ ^https://storage.googleapis.com.* ]] ; then
+    #  curl_headers="Authorization: Bearer $(gcloud auth print-access-token)"
+    #fi
     curl ${curl_headers:+-H "${curl_headers}"} -fL --retry 3 --keepalive-time 2 "${kubernetes_tar_url}" -o "${file}"
   elif [[ $(which wget) ]]; then
-    wget "${kubernetes_tar_url}"
+   wget "${kubernetes_tar_url}"
   else
     echo "Couldn't find curl or wget.  Bailing out."
     exit 1
@@ -255,6 +324,7 @@ fi
 echo "Unpacking kubernetes release ${KUBE_VERSION}"
 rm -rf "${PWD}/kubernetes"
 tar -xzf ${file}
+
 
 download_kube_binaries
 create_cluster
