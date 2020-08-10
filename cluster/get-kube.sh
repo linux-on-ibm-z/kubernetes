@@ -101,6 +101,8 @@ function download_kube_binaries {
   (
     cd kubernetes
     if [[ -x ./cluster/get-kube-binaries.sh ]]; then
+      # comment out gcloud commnd
+      sed -i 's/curl_headers="Authorization/#curl_headers="Authorization/' ./cluster/get-kube-binaries.sh
       # Make sure to use the same download URL in get-kube-binaries.sh
       KUBERNETES_RELEASE_URL="${KUBERNETES_RELEASE_URL}" \
         ./cluster/get-kube-binaries.sh
