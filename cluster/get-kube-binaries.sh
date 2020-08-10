@@ -158,7 +158,7 @@ function download_tarball() {
     curl_headers=""
     if { [[ "${KUBERNETES_PROVIDER:-gce}" == "gce" ]] || [[ "${KUBERNETES_PROVIDER}" == "gke" ]] ; } &&
        [[ "$url" =~ ^https://storage.googleapis.com.* ]]; then
-      curl_headers="Authorization: Bearer $(gcloud auth print-access-token)"
+     # curl_headers="Authorization: Bearer $(gcloud auth print-access-token)"
     fi
     curl ${curl_headers:+-H "${curl_headers}"} -fL --retry 3 --keepalive-time 2 "${url}" -o "${download_path}/${file}"
   elif [[ $(which wget) ]]; then
