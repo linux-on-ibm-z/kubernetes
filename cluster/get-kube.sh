@@ -170,15 +170,17 @@ function create_cluster {
     fi
     echo "Kubernetes binaries at ${PWD}/cluster/"
     export PATH=${PWD}/k8s_server/server/bin:$PATH
+
     swapoff -a
     setUpKubelet
+    export DOCKER_API_VERSION=1.39
     kubeadm init --pod-network-cidr=10.244.0.0/16
     sleep 2m
     mkdir -p $HOME/.kube
     cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
     chown $(id -u):$(id -g) $HOME/.kube/config
     kubectl taint nodes --all node-role.kubernetes.io/master-
-    kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/2140ac876ef134e0ed5af15c65e414cf26827915/Documentation/kube-flannel.yml
+    kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
     if [[ ":$PATH:" != *":${PWD}/cluster:"* ]]; then
       echo "You may want to add this directory to your PATH in \$HOME/.profile"
     fi
@@ -246,7 +248,7 @@ esac
 file=kubernetes.tar.gz
 release=${KUBERNETES_RELEASE:-"release/stable"}
 
-# check for cmd line k8s version 
+# check for cmd line k8s version
 if [[ "$#" -ne 1 && "$#" -eq 0 ]]; then
         set_binary_version "${release}"
 else
