@@ -252,12 +252,12 @@ func decode(msg []byte, strict bool) (*Counter, error) {
 		// netlink attributes are in LTV(length, type and value) format.
 
 		// STEP 1. parse length [2 bytes]
-		if err := binary.Read(reader, binary.NativeEndian, &length); err != nil {
+		if err := binary.Read(reader, binary.LittleEndian, &length); err != nil {
 			return nil, err
 		}
 
 		// STEP 2. parse type   [2 bytes]
-		if err := binary.Read(reader, binary.NativeEndian, &attrType); err != nil {
+		if err := binary.Read(reader, binary.LittleEndian, &attrType); err != nil {
 			return nil, err
 		}
 
