@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"syscall"
+	"runtime"
 
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
@@ -241,6 +242,18 @@ func handleError(err error) error {
 //	    __u16 nla_type:     NFACCT_BYTES
 //	    __u64: data:        54321
 //	}
+
+func convertEndian(reader *bytes.Reader) *bytes.Reader {
+       index, _ := reader.Seek(0, io.SeekCurrent)
+       reader.Seek(0, io.SeekStart)
+       data := make([]byte, reader.Len())
+       reader.Read(data)
+       data[index], data[index+1], data[index+2], data[index+3] = data[index+1], data[index], data[index+3], data[index+2]
+       newReader := bytes.NewReader(data)
+       newReader.Seek(index, io.SeekStart)
+       return newReader
+}
+
 func decode(msg []byte, strict bool) (*Counter, error) {
 	counter := &Counter{}
 	reader := bytes.NewReader(msg)
@@ -259,6 +272,9 @@ func decode(msg []byte, strict bool) (*Counter, error) {
 	// message; we iterate over all the attributes one by one to construct our Counter object.
 	for reader.Len() > 0 {
 		// netlink attributes are in LTV(length, type and value) format.
+		if runtime.GOARCH == "s390x" {
+                       reader = convertEndian(reader)
+		}
 
 		// STEP 1. parse length [2 bytes]
 		if err := binary.Read(reader, binary.NativeEndian, &length); err != nil {
